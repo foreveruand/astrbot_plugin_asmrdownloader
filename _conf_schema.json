@@ -1,0 +1,57 @@
+{
+  "save_path": {
+    "type": "string",
+    "default": "data/asmr",
+    "description": "ASMR 文件保存路径"
+  },
+  "organizer_path": {
+    "type": "string",
+    "default": "",
+    "description": "普通作品整理路径"
+  },
+  "r18_organizer_path": {
+    "type": "string",
+    "default": "",
+    "description": "R18 作品整理路径"
+  },
+  "max_concurrent_downloads": {
+    "type": "integer",
+    "default": 3,
+    "description": "最大并发下载数"
+  },
+  "enable_rclone": {
+    "type": "boolean",
+    "default": false,
+    "description": "启用 rclone 上传"
+  },
+  "rclone_server": {
+    "type": "string",
+    "default": "",
+    "description": "rclone 远程名称"
+  },
+  "hq_only": {
+    "type": "boolean",
+    "default": true,
+    "description": "仅下载无损音质"
+  },
+  "host_name": {
+    "type": "string",
+    "default": "https://api.asmr-200.com",
+    "description": "ASMR.ONE API 地址"
+  },
+  "default_file_types": {
+    "type": "array",
+    "default": ["audio", "image", "text"],
+    "description": "默认下载的文件类型"
+  },
+  "chunk_size": {
+    "type": "integer",
+    "default": 8388608,
+    "description": "下载块大小（字节）"
+  },
+  "blacklist": {
+    "type": "array",
+    "default": ["无SE", "SE無", "无音效", "効果音無し", "なし", "音效cut", "体験版"],
+    "description": "标题黑名单关键词"
+  }
+}

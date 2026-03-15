@@ -1,0 +1,10 @@
+name: astrbot_plugin_asmrdownloader
+description: Download ASMR audio works from ASMR.ONE
+version: 1.0.0
+author: your-name
+repo: https://github.com/your-name/astrbot_plugin_asmrdownloader
+support_platforms:
+  - all
+commands:
+  - name: asmr
+    description: "Download ASMR work by RJ code. Usage: /asmr RJ123456"
