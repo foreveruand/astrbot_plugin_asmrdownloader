@@ -2,7 +2,6 @@
 
 import asyncio
 import os
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +55,9 @@ async def select_files_to_download(
         return []
 
     selected_tracks = []
+    allowed_types = {
+        t.lower() for t in (config.default_file_types or []) if isinstance(t, str)
+    }
     for track in tracks:
         # Check blacklist
         if any(banned in track.folder_path for banned in config.blacklist):
@@ -63,10 +65,16 @@ async def select_files_to_download(
         if any(banned in track.filename for banned in config.blacklist):
             continue
 
-        # Select audio files (HQ only mode) or other file types
-        if track.type == "audio" and track.is_hq():
+        # Restrict to configured file types
+        track_type = track.type.lower()
+        if allowed_types and track_type not in allowed_types:
+            continue
+
+        if track_type == "audio":
+            if config.hq_only and not track.is_hq():
+                continue
             selected_tracks.append(track)
-        elif track.type != "audio":
+        else:
             selected_tracks.append(track)
 
     if not selected_tracks:
@@ -142,6 +150,7 @@ async def download_track(
     track: WorkTrack,
     track_index: int,
     max_concurrent_downloads: int,
+    chunk_size: int,
 ) -> tuple[bool, float]:
     """Download a single track with retry logic."""
     if await check_file_integrity(track):
@@ -181,7 +190,7 @@ async def download_track(
                         track.size = total / 1024 / 1024
                     # Append write (support resume)
                     with open(track.save_path, "ab") as f:
-                        async for chunk in r.aiter_bytes():
+                        async for chunk in r.aiter_bytes(chunk_size=chunk_size):
                             if not chunk:
                                 continue
                             f.write(chunk)
@@ -252,7 +261,11 @@ async def process_work(work_id: str, config: PluginConfig):
                 try:
                     async with semaphore:
                         success, size_mb = await download_track(
-                            session, track, index, config.max_concurrent_downloads
+                            session,
+                            track,
+                            index,
+                            config.max_concurrent_downloads,
+                            config.chunk_size,
                         )
                         if success:
                             return track, True, size_mb
@@ -344,7 +357,14 @@ async def process_work(work_id: str, config: PluginConfig):
 
         logger.debug(f"start dvtag process of RJ{work_id}")
         # dvtag
-        subprocess.run(["dvtag", "-w2f", str(base_dir / f"RJ{work_id}")], check=False)
+        process = await asyncio.create_subprocess_exec(
+            "dvtag",
+            "-w2f",
+            str(base_dir / f"RJ{work_id}"),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await process.wait()
 
         # Convert VTT to LRC
         vtt_dir = base_dir / f"RJ{work_id}"

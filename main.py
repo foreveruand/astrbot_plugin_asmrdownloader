@@ -38,8 +38,8 @@ class Main(star.Star):
         # Ensure save path exists
         Path(self.config.save_path).mkdir(parents=True, exist_ok=True)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("asmr")
+    @filter.permission_type(filter.PermissionType.ADMIN)
     async def asmr(self, event: AstrMessageEvent, rj_code: str = "") -> None:
         """Download ASMR work by RJ code.
 
