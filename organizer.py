@@ -36,11 +36,18 @@ async def organize_album(config: PluginConfig, work_dir: Path, meta: dict):
         ]
         # Run rclone and yield progress
         process = subprocess.Popen(
-            transfer_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            transfer_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
-        for line in process.stdout:
+        for line in process.stdout or []:
             yield "progress", line.strip()
-        process.wait()
+        return_code = process.wait()
+        if return_code:
+            raise RuntimeError(f"rclone failed with exit code {return_code}")
         yield "success", f"{str(work_dir)} -> {config.rclone_server}:{str(target)}"
     else:
         logger.info(f"asmr organizer path: {str(target)}")

@@ -11,6 +11,7 @@ Download ASMR audio works from ASMR.ONE.
 - NFO metadata file generation
 - VTT to LRC subtitle conversion
 - dvtag integration for audio tagging
+- Editable progress updates on supported platforms, with throttled fallback updates
 
 ## Installation
 
@@ -29,6 +30,10 @@ This command will:
 4. Apply dvtag for audio tagging
 5. Convert VTT subtitles to LRC format
 6. Organize files (if organizer_path is configured)
+
+Progress updates are edited in place on supported platforms. On platforms without
+message editing support, download and rclone progress messages are throttled to
+reduce message noise.
 
 ## Configuration
 

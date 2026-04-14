@@ -1,7 +1,6 @@
 """Download logic for ASMR works."""
 
 import asyncio
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,9 +120,9 @@ def vtt_timestamp_to_lrc(ts: str) -> str:
     return f"[{total_m:02d}:{s:02d}]"
 
 
-def convert_vtt_to_lrc(vtt_path: str, lrc_path: str):
+def convert_vtt_to_lrc(vtt_path: Path, lrc_path: Path) -> None:
     """Convert VTT subtitle file to LRC format."""
-    with open(vtt_path, encoding="utf-8") as f:
+    with open(vtt_path, encoding="utf-8-sig", errors="replace") as f:
         lines = f.readlines()
 
     lrc_lines = []
@@ -174,6 +173,7 @@ async def download_track(
             existing_size = (
                 track.save_path.stat().st_size if track.save_path.exists() else 0
             )
+            track.downloaded_bytes = existing_size
             headers = {"Range": f"bytes={existing_size}-"} if existing_size else {}
 
             async with httpx.AsyncClient(timeout=None) as client:
@@ -185,6 +185,9 @@ async def download_track(
                 ) as r:
                     r.raise_for_status()
                     total = int(r.headers.get("Content-Length", 0))
+                    content_range = r.headers.get("Content-Range")
+                    if content_range and "/" in content_range:
+                        total = int(content_range.rsplit("/", 1)[1])
                     track.total_bytes = total
                     if total and total_size == 0:
                         track.size = total / 1024 / 1024
@@ -292,9 +295,27 @@ async def process_work(work_id: str, config: PluginConfig):
                     if t.status in ["Downloading", "Retrying"] and t.total_bytes
                 ]
                 pending_files = [t for t in tracks if t.status in ["Pending"]]
+                total_bytes = sum(
+                    t.total_bytes
+                    or (int(float(t.size) * 1024 * 1024) if t.size else 0)
+                    for t in tracks
+                )
+                downloaded_bytes = sum(
+                    (
+                        t.total_bytes
+                        or (int(float(t.size) * 1024 * 1024) if t.size else 0)
+                    )
+                    if t.status in ["Downloaded", "Completed"]
+                    else t.downloaded_bytes
+                    for t in tracks
+                )
+                overall_progress = (
+                    downloaded_bytes * 100 / total_bytes if total_bytes else 0
+                )
 
                 lines = [
-                    f"Completed files: {len(completed_files)}",
+                    f"Overall progress: {overall_progress:.1f}%",
+                    f"Completed files: {len(completed_files)} / {len(tracks)}",
                     *[
                         f"{t.filename} - {(t.downloaded_bytes * 100 / t.total_bytes):.1f}% "
                         f"({t.downloaded_bytes / 1024 / 1024:.2f}MB / {t.total_bytes / 1024 / 1024:.2f}MB)"
@@ -370,14 +391,12 @@ async def process_work(work_id: str, config: PluginConfig):
         vtt_dir = base_dir / f"RJ{work_id}"
         vtt_files = list(vtt_dir.rglob("*.vtt"))
         for path in vtt_files:
-            path_str = str(path)
+            if path.name.endswith(".wav.vtt"):
+                lrc_path = path.with_name(path.name.removesuffix(".wav.vtt") + ".lrc")
+            else:
+                lrc_path = path.with_suffix(".lrc")
 
-            if path_str.endswith(".wav.vtt"):
-                lrc_path = path_str[:-8] + ".lrc"
-            elif path_str.endswith(".vtt"):
-                lrc_path = os.path.splitext(path_str)[0] + ".lrc"
-
-            convert_vtt_to_lrc(path, Path(lrc_path))
+            convert_vtt_to_lrc(path, lrc_path)
 
         # Organize files
         async for transfer_finish, progress in organize_album(
