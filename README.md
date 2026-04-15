@@ -12,6 +12,7 @@ Download ASMR audio works from ASMR.ONE.
 - VTT to LRC subtitle conversion
 - dvtag integration for audio tagging
 - Editable progress updates on supported platforms, with throttled fallback updates
+- Structured rclone progress summaries with total progress, speed, ETA, and current file
 
 ## Installation
 
@@ -33,7 +34,8 @@ This command will:
 
 Progress updates are edited in place on supported platforms. On platforms without
 message editing support, download and rclone progress messages are throttled to
-reduce message noise.
+20% progress intervals to reduce message noise. Rclone output is summarized into
+compact progress snapshots instead of forwarding raw stdout lines.
 
 ## Configuration
 
