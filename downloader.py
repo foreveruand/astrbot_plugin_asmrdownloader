@@ -24,7 +24,7 @@ class DownloadResult:
 
 
 async def check_file_integrity(track: WorkTrack) -> bool:
-    """Verify that the local file exists and its size matches the expected size."""
+    """Verify that the local file exists and matches the expected size when known."""
     if not track.save_path.exists():
         return False
     try:
@@ -33,16 +33,30 @@ async def check_file_integrity(track: WorkTrack) -> bool:
         return False
 
     expected_bytes: int | None = None
-    if getattr(track, "total_bytes", None):
-        expected_bytes = int(track.total_bytes)
+    total_bytes = getattr(track, "total_bytes", None)
+    if total_bytes is not None and total_bytes > 0:
+        expected_bytes = int(total_bytes)
     elif getattr(track, "size", None) is not None:
         # track.size is stored in megabytes
         expected_bytes = int(float(track.size) * 1024 * 1024)
 
     if expected_bytes is None:
-        # No size information available; fall back to existence check
-        return False
+        # No reliable size information available; existence is the best check.
+        return True
     return actual_size == expected_bytes
+
+
+def is_text_track(track: WorkTrack) -> bool:
+    """Return True when the track represents a text-like file."""
+    return track.type == "text" or track.save_path.suffix.lower() in {
+        ".txt",
+        ".md",
+        ".srt",
+        ".vtt",
+        ".lrc",
+        ".ass",
+        ".ssa",
+    }
 
 
 async def select_files_to_download(
@@ -173,7 +187,6 @@ async def download_track(
             existing_size = (
                 track.save_path.stat().st_size if track.save_path.exists() else 0
             )
-            track.downloaded_bytes = existing_size
             headers = {"Range": f"bytes={existing_size}-"} if existing_size else {}
 
             async with httpx.AsyncClient(timeout=None) as client:
@@ -183,6 +196,11 @@ async def download_track(
                     headers=headers,
                     follow_redirects=True,
                 ) as r:
+                    if r.status_code == 416:
+                        raise httpx.HTTPStatusError(
+                            "Range Not Satisfiable", request=r.request, response=r
+                        )
+
                     r.raise_for_status()
                     total = int(r.headers.get("Content-Length", 0))
                     content_range = r.headers.get("Content-Range")
@@ -191,8 +209,21 @@ async def download_track(
                     track.total_bytes = total
                     if total and total_size == 0:
                         track.size = total / 1024 / 1024
-                    # Append write (support resume)
-                    with open(track.save_path, "ab") as f:
+                    should_resume = (
+                        existing_size > 0
+                        and r.status_code == 206
+                        and bool(content_range)
+                    )
+                    if not should_resume and existing_size > 0:
+                        try:
+                            track.save_path.unlink()
+                        except OSError:
+                            pass
+                        existing_size = 0
+
+                    track.downloaded_bytes = existing_size if should_resume else 0
+                    # Append only when the server actually honored the range request.
+                    with open(track.save_path, "ab" if should_resume else "wb") as f:
                         async for chunk in r.aiter_bytes(chunk_size=chunk_size):
                             if not chunk:
                                 continue
@@ -209,6 +240,25 @@ async def download_track(
             return True, track.downloaded_bytes / 1024 / 1024
 
         except httpx.HTTPStatusError as e:
+            if e.response is not None and e.response.status_code == 416:
+                if attempt < 2:
+                    track.status = "Retrying"
+                    logger.warning(
+                        f"Range request failed for {track.filename} with 416. "
+                        "Re-downloading from scratch..."
+                    )
+                    try:
+                        track.save_path.unlink()
+                    except OSError:
+                        pass
+                    await asyncio.sleep(1)
+                    continue
+                track.status = "Error"
+                logger.error(
+                    f"Failed to download {track.filename}: {e}. "
+                    "Server rejected resume requests."
+                )
+                return False, 0
             if attempt < 2:
                 track.status = "Retrying"
                 logger.error(
@@ -296,8 +346,7 @@ async def process_work(work_id: str, config: PluginConfig):
                 ]
                 pending_files = [t for t in tracks if t.status in ["Pending"]]
                 total_bytes = sum(
-                    t.total_bytes
-                    or (int(float(t.size) * 1024 * 1024) if t.size else 0)
+                    t.total_bytes or (int(float(t.size) * 1024 * 1024) if t.size else 0)
                     for t in tracks
                 )
                 downloaded_bytes = sum(
@@ -348,10 +397,15 @@ async def process_work(work_id: str, config: PluginConfig):
             finished = True
             logger.debug("all tasks finished, check all files")
             for track in selected_tracks:
-                if not await check_file_integrity(track):
+                if not track.save_path.exists():
                     finished = False
                     logger.error(
                         f"File {track.filename} not found. Scheduling for retry."
+                    )
+                elif not await check_file_integrity(track):
+                    finished = False
+                    logger.error(
+                        f"File {track.filename} size mismatch. Scheduling for retry."
                     )
 
             if finished:
@@ -371,9 +425,20 @@ async def process_work(work_id: str, config: PluginConfig):
             elif track in selected_tracks:
                 failed_files.append(track)
 
-        if failed_files:
+        non_text_failed_files = [
+            track for track in failed_files if not is_text_track(track)
+        ]
+        if non_text_failed_files:
             raise Exception(
-                f"Failed files for RJ{work_id}: {[t.filename for t in failed_files]}"
+                f"Failed files for RJ{work_id}: "
+                f"{[t.filename for t in non_text_failed_files]}"
+            )
+
+        if failed_files:
+            logger.warning(
+                f"Text files failed verification for RJ{work_id}, "
+                "continuing processing: "
+                f"{[t.filename for t in failed_files]}"
             )
 
         logger.debug(f"start dvtag process of RJ{work_id}")

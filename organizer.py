@@ -1,5 +1,6 @@
 """File organization logic for ASMR works."""
 
+import asyncio
 import datetime
 import shutil
 from pathlib import Path
@@ -23,8 +24,6 @@ async def organize_album(config: PluginConfig, work_dir: Path, meta: dict):
         target = Path(config.organizer_path) / artist / meta["source_id"]
 
     if config.enable_rclone:
-        import subprocess
-
         transfer_cmd = [
             "rclone",
             "move",
@@ -34,18 +33,15 @@ async def organize_album(config: PluginConfig, work_dir: Path, meta: dict):
             "--stats=2s",
             "--no-traverse",
         ]
-        # Run rclone and yield progress
-        process = subprocess.Popen(
-            transfer_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+        process = await asyncio.create_subprocess_exec(
+            *transfer_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
-        for line in process.stdout or []:
-            yield "progress", line.strip()
-        return_code = process.wait()
+        assert process.stdout is not None
+        async for line in process.stdout:
+            yield "progress", line.decode("utf-8", errors="replace").strip()
+        return_code = await process.wait()
         if return_code:
             raise RuntimeError(f"rclone failed with exit code {return_code}")
         yield "success", f"{str(work_dir)} -> {config.rclone_server}:{str(target)}"

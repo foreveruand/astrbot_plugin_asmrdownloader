@@ -126,7 +126,9 @@ class ProgressPublisher:
             self._last_sent_at = time.monotonic()
             self._last_percent = self._extract_percent(message)
         except Exception as e:
-            logger.warning(f"Editable progress update failed, falling back to send: {e}")
+            logger.warning(
+                f"Editable progress update failed, falling back to send: {e}"
+            )
             self._telegram_payload = None
             await self._send(message)
 
@@ -151,9 +153,8 @@ class ProgressPublisher:
         if self._last_percent is None:
             return True
 
-        return (
-            percent >= self._last_percent + FALLBACK_PROGRESS_PERCENT_STEP
-            or (percent >= 100 and self._last_percent < 100)
+        return percent >= self._last_percent + FALLBACK_PROGRESS_PERCENT_STEP or (
+            percent >= 100 and self._last_percent < 100
         )
 
     @staticmethod

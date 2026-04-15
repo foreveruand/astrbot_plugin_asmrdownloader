@@ -1,7 +1,7 @@
 name: astrbot_plugin_asmrdownloader
 display_name: ASMR.ONE下载器
 description: Download ASMR audio works from ASMR.ONE
-version: 1.0.1
+version: 1.0.2
 author: foreveruand
 repo: https://github.com/foreveruand/astrbot_plugin_asmrdownloader
 commands:
