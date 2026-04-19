@@ -10,7 +10,7 @@ Download ASMR audio works from ASMR.ONE.
 - File organization with rclone support
 - NFO metadata file generation
 - VTT to LRC subtitle conversion
-- dvtag integration for audio tagging
+- dvtag tagging with Mutagen fallback for FLAC metadata and cover art
 - Editable progress updates on supported platforms, with throttled fallback updates
 - Structured rclone progress summaries with total progress, speed, ETA, and current file
 
@@ -28,7 +28,7 @@ This command will:
 1. Fetch work metadata from ASMR.ONE
 2. Download selected audio tracks (HQ by default)
 3. Download cover image
-4. Apply dvtag for audio tagging
+4. Run dvtag, then backfill missing FLAC metadata and cover art if needed
 5. Convert VTT subtitles to LRC format
 6. Organize files (if organizer_path is configured)
 
@@ -57,7 +57,8 @@ compact progress snapshots instead of forwarding raw stdout lines.
 - aiohttp
 - aiofiles
 - httpx
-- dvtag (optional, for audio tagging)
+- mutagen
+- dvtag
 
 ## License
 

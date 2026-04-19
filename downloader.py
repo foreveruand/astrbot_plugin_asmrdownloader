@@ -158,6 +158,129 @@ def convert_vtt_to_lrc(vtt_path: Path, lrc_path: Path) -> None:
         f.write("\n".join(lrc_lines))
 
 
+def _get_metadata_values(meta: dict, key: str) -> list[str]:
+    values = meta.get(key, [])
+    if not isinstance(values, list):
+        return []
+    result: list[str] = []
+    for item in values:
+        if isinstance(item, dict) and item.get("name"):
+            result.append(str(item.get("name", "")).strip())
+    return result
+
+
+def _get_flac_tracks(tracks: list[WorkTrack]) -> list[WorkTrack]:
+    """Return downloaded FLAC tracks that can be tagged."""
+    return [
+        track
+        for track in tracks
+        if (
+            track.type == "audio"
+            and track.save_path.suffix.lower() == ".flac"
+            and track.save_path.exists()
+        )
+    ]
+
+
+def _flac_has_metadata(track: WorkTrack) -> bool:
+    """Check whether a FLAC file already contains tags or embedded images."""
+    try:
+        from mutagen.flac import FLAC
+    except ImportError as exc:  # pragma: no cover - runtime dependency issue
+        raise RuntimeError("mutagen is required for FLAC metadata tagging") from exc
+
+    try:
+        audio = FLAC(str(track.save_path))
+    except Exception:
+        return False
+
+    if audio.tags:
+        return True
+    return bool(getattr(audio, "pictures", []))
+
+
+def write_flac_tags(
+    work_dir: Path,
+    work_id: str,
+    meta: dict,
+    tracks: list[WorkTrack],
+) -> int:
+    """Write FLAC metadata in-place before the directory is transferred."""
+    try:
+        from mutagen import MutagenError
+        from mutagen.flac import FLAC, Picture
+    except ImportError as exc:  # pragma: no cover - runtime dependency issue
+        raise RuntimeError("mutagen is required for FLAC metadata tagging") from exc
+
+    flac_tracks = _get_flac_tracks(tracks)
+    if not flac_tracks:
+        logger.debug(f"No FLAC files found for RJ{work_id}; skipping tag write.")
+        return 0
+
+    album_title = str(meta.get("title") or f"RJ{work_id}")
+    artist_names = _get_metadata_values(meta, "vas")
+    album_artist = str((meta.get("circle") or {}).get("name") or "")
+    genre_names = _get_metadata_values(meta, "tags")
+    release = str(meta.get("release") or "").strip()
+    cover_path = work_dir / "cover.jpg"
+    cover_bytes = cover_path.read_bytes() if cover_path.exists() else None
+
+    tagged_files = 0
+    for index, track in enumerate(flac_tracks, start=1):
+        try:
+            audio = FLAC(str(track.save_path))
+            audio["title"] = [Path(track.filename).stem or track.filename]
+            audio["album"] = [album_title]
+            if album_artist:
+                audio["albumartist"] = [album_artist]
+            if artist_names:
+                audio["artist"] = artist_names
+            if genre_names:
+                audio["genre"] = genre_names
+            if release:
+                audio["date"] = [release[:10]]
+            audio["tracknumber"] = [str(index)]
+            audio["comment"] = [f"Source: RJ{work_id}"]
+
+            if cover_bytes:
+                picture = Picture()
+                picture.data = cover_bytes
+                picture.type = 3
+                picture.desc = "Cover"
+                picture.mime = "image/jpeg"
+                audio.clear_pictures()
+                audio.add_picture(picture)
+
+            audio.save()
+            tagged_files += 1
+        except (OSError, MutagenError, ValueError) as exc:
+            raise RuntimeError(
+                f"Failed to write FLAC metadata for {track.save_path.name}: {exc}"
+            ) from exc
+
+    return tagged_files
+
+
+def ensure_flac_tags(
+    work_dir: Path,
+    work_id: str,
+    meta: dict,
+    tracks: list[WorkTrack],
+) -> int:
+    """Fill in missing FLAC metadata after dvtag has already run."""
+    flac_tracks = _get_flac_tracks(tracks)
+    missing_tracks = [track for track in flac_tracks if not _flac_has_metadata(track)]
+    if not missing_tracks:
+        logger.debug(f"dvtag already wrote FLAC metadata for RJ{work_id}.")
+        return 0
+
+    logger.warning(
+        f"FLAC metadata missing after dvtag for RJ{work_id}; "
+        f"backfilling {len(missing_tracks)} file(s)."
+    )
+    return write_flac_tags(work_dir, work_id, meta, missing_tracks)
+
+
 async def download_track(
     session: aiohttp.ClientSession,
     track: WorkTrack,
@@ -442,15 +565,38 @@ async def process_work(work_id: str, config: PluginConfig):
             )
 
         logger.debug(f"start dvtag process of RJ{work_id}")
-        # dvtag
-        process = await asyncio.create_subprocess_exec(
-            "dvtag",
-            "-w2f",
-            str(base_dir / f"RJ{work_id}"),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "dvtag",
+                "-w2f",
+                str(base_dir / f"RJ{work_id}"),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            dvtag_return_code = await process.wait()
+            if dvtag_return_code:
+                logger.warning(
+                    f"dvtag exited with code {dvtag_return_code} for RJ{work_id}; "
+                    "falling back to metadata backfill."
+                )
+        except FileNotFoundError:
+            logger.warning(
+                f"dvtag command not found for RJ{work_id}; "
+                "falling back to metadata backfill."
+            )
+
+        logger.debug(f"check FLAC metadata for RJ{work_id}")
+        tagged_files = await asyncio.to_thread(
+            ensure_flac_tags,
+            base_dir / f"RJ{work_id}",
+            work_id,
+            meta,
+            selected_tracks,
         )
-        await process.wait()
+        if tagged_files:
+            logger.debug(f"Backfilled {tagged_files} FLAC files for RJ{work_id}")
+        else:
+            logger.debug(f"dvtag metadata is sufficient for RJ{work_id}")
 
         # Convert VTT to LRC
         vtt_dir = base_dir / f"RJ{work_id}"

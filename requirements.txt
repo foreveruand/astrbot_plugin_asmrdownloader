@@ -1,3 +1,4 @@
 aiohttp>=3.8.0
 aiofiles>=23.0.0
 httpx>=0.24.0
+mutagen>=1.47.0

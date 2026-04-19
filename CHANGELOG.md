@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4
+
+- Keep rclone progress updates on summary lines so messages stay stable and include the active file context.
+- Keep dvtag as the primary tagging step and backfill missing FLAC metadata with Mutagen when dvtag does not write it.
+- Embed cover art and basic album tags before rclone transfer so remote copies keep the metadata.
+
 ## 1.0.3
 
 - Parse rclone output into compact progress snapshots instead of forwarding raw lines.

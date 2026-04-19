@@ -7,6 +7,7 @@ import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import aiofiles
 
@@ -33,6 +34,7 @@ SUMMARY_PERCENT_RE = re.compile(r"(?P<percent>\d+(?:\.\d+)?)%")
 class RcloneProgressState:
     """Normalized rclone progress snapshot."""
 
+    kind: Literal["file", "summary"] = "summary"
     overall_percent: float | None = None
     transferred: str | None = None
     total: str | None = None
@@ -105,6 +107,7 @@ def parse_rclone_progress_line(line: str) -> RcloneProgressState | None:
     state = RcloneProgressState()
 
     if line.startswith("Transferred:"):
+        state.kind = "summary"
         parts = [part.strip() for part in line.split(",")]
         summary = parts[0]
         summary_payload = summary.removeprefix("Transferred:").strip()
@@ -131,6 +134,7 @@ def parse_rclone_progress_line(line: str) -> RcloneProgressState | None:
 
     current_match = TRANSFERRING_RE.match(line) or TRANSFERRING_RE_FALLBACK.match(line)
     if current_match:
+        state.kind = "file"
         state.current_file = current_match.group("file").strip()
         try:
             state.overall_percent = float(current_match.group("percent"))
@@ -165,7 +169,8 @@ async def organize_album(config: PluginConfig, work_dir: Path, meta: dict):
             f"{work_dir}",
             f"{config.rclone_server}:{str(target)}",
             "-P",
-            "--stats=2s",
+            "--stats=3s",
+            "--metadata",
             "--no-traverse",
         ]
         process = await asyncio.create_subprocess_exec(
@@ -175,11 +180,21 @@ async def organize_album(config: PluginConfig, work_dir: Path, meta: dict):
         )
         assert process.stdout is not None
         last_message = ""
+        active_file: str | None = None
         async for line in process.stdout:
             decoded_line = _safe_decode_line(line)
             snapshot = parse_rclone_progress_line(decoded_line)
             if snapshot is None:
                 continue
+
+            if snapshot.current_file:
+                active_file = snapshot.current_file
+
+            if snapshot.kind == "file":
+                continue
+
+            if active_file and not snapshot.current_file:
+                snapshot.current_file = active_file
 
             message = snapshot.format_message()
             if message == last_message:
